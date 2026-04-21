@@ -1,0 +1,59 @@
+{
+  "name": "deepseek-native-chat",
+  "displayName": "DeepSeek Native Chat",
+  "description": "DeepSeek AI as a native language model provider in VS Code",
+  "version": "0.1.0",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.88.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguageModelAccess"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "deepseek.configure",
+        "title": "Configure DeepSeek API Key",
+        "category": "DeepSeek"
+      }
+    ],
+    "configuration": {
+      "title": "DeepSeek",
+      "properties": {
+        "deepseek.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your DeepSeek API key (get from https://platform.deepseek.com)",
+          "scope": "application"
+        },
+        "deepseek.baseURL": {
+          "type": "string",
+          "default": "https://api.deepseek.com",
+          "description": "DeepSeek API base URL",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-fetch": "^2.6.13",
+    "@types/vscode": "^1.88.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
