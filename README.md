@@ -2,77 +2,96 @@
 
 Integrate DeepSeek AI as a native language model provider in VS Code using your own API key.
 
-## What This Does
+## Quick Installation
 
-This extension adds DeepSeek as a **native language model provider** in VS Code, meaning:
-- DeepSeek appears in the model selector alongside Claude, GPT, etc.
-- You can use DeepSeek for chat, code completion, and other AI features
-- It uses your own DeepSeek API key
-- It's integrated into VS Code's native AI experience
-
-## Installation
-
-### Option 1: Development Mode (Quick Test)
-1. Open the `deepseek-native-chat` folder in VS Code
-2. Press `F5` to launch extension development host
-3. In the new VS Code window, the extension will be active
-
-### Option 2: Build and Install Permanently
+### One-Command Installation (Recommended)
 ```bash
-# Build the extension
+# Clone the repository
+git clone https://github.com/your-username/deepseek-native-chat.git
 cd deepseek-native-chat
+
+# Run the installation script
+./install.sh
+```
+
+### Manual Installation
+```bash
+# Clone the repository
+git clone https://github.com/your-username/deepseek-native-chat.git
+cd deepseek-native-chat
+
+# Install dependencies and compile
+npm install
 npm run compile
 
-# Package as VSIX
-npm install -g @vscode/vsce
-vsce package
+# Package the extension
+npx @vscode/vsce package --allow-missing-repository
 
 # Install the VSIX file
-code --install-extension deepseek-native-chat-0.1.0.vsix
+code --install-extension deepseek-native-chat-*.vsix
 ```
+
+If `code` command is not found:
+1. Open VS Code
+2. Go to Extensions (Cmd+Shift+X or Ctrl+Shift+X)
+3. Click '...' (More Actions) → 'Install from VSIX...'
+4. Select the generated `.vsix` file
 
 ## Configuration
 
-1. Get your API key from [DeepSeek Platform](https://platform.deepseek.com)
-2. In VS Code:
+1. **Get your API key** from [DeepSeek Platform](https://platform.deepseek.com)
+2. **Configure in VS Code**:
    - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
-   - Type "Configure DeepSeek API Key"
+   - Type **"Configure DeepSeek API Key"**
    - Enter your API key
 
-Or configure in settings:
+Or add to settings.json:
 ```json
 {
-  "deepseek.apiKey": "sk-your-api-key-here",
-  "deepseek.baseURL": "https://api.deepseek.com"
+  "deepseek.apiKey": "sk-your-api-key-here"
 }
 ```
 
 ## Usage
 
-1. Open the chat panel (`Cmd+I` on Mac, `Ctrl+I` on Windows/Linux)
-2. Click on the model selector (usually shows "Claude" or "GPT")
-3. Select "DeepSeek Chat" or "DeepSeek Coder"
+1. Open chat panel (`Cmd+I` on Mac, `Ctrl+I` on Windows/Linux)
+2. Click the model selector (shows "Claude", "GPT", etc.)
+3. Select **"DeepSeek Chat"** or **"DeepSeek Coder"**
 4. Start chatting!
 
-## Features
+## What This Does
 
-- ✅ **Native Integration**: DeepSeek appears in VS Code's model selector
-- ✅ **Your API Key**: Use your own DeepSeek API key
-- ✅ **Two Models**: DeepSeek Chat and DeepSeek Coder
-- ✅ **Streaming Responses**: Real-time streaming like native AI
-- ✅ **Conversation History**: Full chat history support
+This extension adds DeepSeek as a **native language model provider** in VS Code:
+- ✅ DeepSeek appears alongside Claude, GPT in model selector
+- ✅ Uses your own DeepSeek API key
+- ✅ Streaming responses like native AI
+- ✅ Full chat history support
+- ✅ Two models: DeepSeek Chat & DeepSeek Coder
 
 ## Requirements
 
 - VS Code 1.88.0 or higher
 - DeepSeek API key (free tier available)
 - Node.js 18+ (for building)
+- GitHub Copilot individual plan (for third-party model providers)
 
 ## Troubleshooting
 
-1. **Extension not appearing**: Make sure you're running VS Code 1.88+
-2. **API errors**: Check your API key is valid and has credits
-3. **No model selector**: You need GitHub Copilot individual plan for third-party model providers
+### Extension not appearing in model selector?
+1. **Restart VS Code** after installation
+2. **Check VS Code version** (must be 1.88.0+)
+3. **Verify API key** is configured correctly
+4. **Check Output panel** (View → Output → "DeepSeek Native Chat")
+5. **Ensure GitHub Copilot individual plan** is active
+
+### 'code' command not found?
+1. Open VS Code
+2. Press `Cmd+Shift+P` → "Shell Command: Install 'code' command in PATH"
+3. Or install manually via Extensions → Install from VSIX
+
+### API errors?
+- Check your API key is valid and has credits
+- Verify network connectivity to DeepSeek API
 
 ## Development
 
@@ -86,8 +105,8 @@ npm run watch
 # Rebuild
 npm run compile
 
-# Test in development host
-Press F5
+# Test installation
+./install.sh
 ```
 
 ## License

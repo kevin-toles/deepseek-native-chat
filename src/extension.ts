@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
                     maxInputTokens: 128000,
                     maxOutputTokens: 4096,
                     capabilities: {
-                        toolCalling: false
+                        toolCalling: true
                     }
                 },
                 {
@@ -26,7 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
                     maxInputTokens: 128000,
                     maxOutputTokens: 4096,
                     capabilities: {
-                        toolCalling: false
+                        toolCalling: true
                     }
                 }
             ];
@@ -132,11 +132,18 @@ export function activate(context: vscode.ExtensionContext) {
 
 function mapRole(role: vscode.LanguageModelChatMessageRole): 'user' | 'assistant' | 'system' {
     if (role === vscode.LanguageModelChatMessageRole.Assistant) {
-            return 'assistant';
+        return 'assistant';
     }
-    // VS Code might not have a System role, treat everything else as user
-            return 'user';
+    // System role is part of proposed API 'languageModelSystem'
+    // We've enabled it in package.json, so we can check for it
+    // Using type assertion since TypeScript definitions might not have it
+    const LanguageModelChatMessageRoleAny = vscode.LanguageModelChatMessageRole as any;
+    if (LanguageModelChatMessageRoleAny.System !== undefined && role === LanguageModelChatMessageRoleAny.System) {
+        return 'system';
     }
+    return 'user';
+}
+
 function flattenParts(parts: readonly unknown[]): string {
     return parts.map(part => {
         if (part instanceof vscode.LanguageModelTextPart) {

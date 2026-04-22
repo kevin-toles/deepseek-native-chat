@@ -1,0 +1,29 @@
+# VS Code extension packaging ignore file
+
+# Development files
+.vscode/
+.git/
+.gitignore
+*.vsix
+install.sh
+test-extension.js
+package.json.bak
+
+# Build artifacts
+out/*.map
+
+# Node modules (but keep dependencies)
+node_modules/
+package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
