@@ -5,19 +5,25 @@
   "version": "0.1.0",
   "publisher": "your-name",
   "engines": {
-    "vscode": "^1.88.0"
+    "vscode": "^1.116.0"
   },
   "categories": [
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onLanguageModelChat:deepseek",
+    "onStartupFinished",
+    "onCommand:deepseek.configure"
   ],
-  "enabledApiProposals": [
-    "languageModelSystem"
-  ],
+  "enabledApiProposals": [],
   "main": "./out/extension.js",
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "deepseek",
+        "displayName": "DeepSeek"
+      }
+    ],
     "commands": [
       {
         "command": "deepseek.configure",
@@ -55,14 +61,11 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/node-fetch": "^2.6.13",
-    "@types/vscode": "^1.88.0",
+    "@types/vscode": "^1.116.0",
     "typescript": "^5.0.0",
     "@vscode/vsce": "^2.26.1"
   },
-  "dependencies": {
-    "node-fetch": "^2.6.7"
-  },
+  "dependencies": {},
   "repository": {
     "type": "git",
     "url": "https://github.com/your-username/deepseek-native-chat.git"
