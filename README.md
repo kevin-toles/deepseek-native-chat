@@ -1,97 +1,66 @@
-# DeepSeek Native Chat for VS Code
+# Universal LLM Provider for VS Code
 
-Integrate DeepSeek AI as a native language model provider in VS Code using your own API key.
+A universal language model provider extension for Visual Studio Code that supports multiple LLM providers including DeepSeek, Qwen, Zhipu GLM, Moonshot Kimi, and any OpenAI-compatible API.
 
-## Quick Installation
+## Features
 
-### One-Command Installation (Recommended)
-```bash
-# Clone the repository
-git clone https://github.com/your-username/deepseek-native-chat.git
-cd deepseek-native-chat
+- **Multi-Provider Support**: Configure multiple LLM providers in one extension
+- **Native Integration**: Models appear in VS Code's native chat interface
+- **Easy Configuration**: Simple API key setup through command palette
+- **Streaming Responses**: Real-time token streaming from LLM APIs
+- **Remote Development**: Works in remote environments (SSH, containers, Codespaces)
 
-# Run the installation script
-./install.sh
-```
+## Supported Providers
 
-### Manual Installation
-```bash
-# Clone the repository
-git clone https://github.com/your-username/deepseek-native-chat.git
-cd deepseek-native-chat
+- **DeepSeek**: Chat & Coder models
+- **Qwen**: Turbo, Plus, Max models  
+- **Zhipu AI**: GLM-5, GLM-5.1 models
+- **Moonshot AI**: Kimi K2.5, K2.6 models
+- **Custom Providers**: Any OpenAI-compatible endpoint
 
-# Install dependencies and compile
-npm install
-npm run compile
+## Installation
 
-# Package the extension
-npx @vscode/vsce package --allow-missing-repository
-
-# Install the VSIX file
-code --install-extension deepseek-native-chat-*.vsix
-```
-
-If `code` command is not found:
-1. Open VS Code
-2. Go to Extensions (Cmd+Shift+X or Ctrl+Shift+X)
-3. Click '...' (More Actions) → 'Install from VSIX...'
-4. Select the generated `.vsix` file
+1. Install the extension from VSIX file
+2. Restart VS Code
 
 ## Configuration
 
-1. **Get your API key** from [DeepSeek Platform](https://platform.deepseek.com)
-2. **Configure in VS Code**:
-   - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
-   - Type **"Configure DeepSeek API Key"**
-   - Enter your API key
-
-Or add to settings.json:
-```json
-{
-  "deepseek.apiKey": "sk-your-api-key-here"
-}
-```
+1. Open Command Palette (`Cmd+Shift+P`)
+2. Run "Universal LLM: Configure Providers"
+3. Select a provider (e.g., DeepSeek)
+4. Enter your API key
+5. Repeat for other providers as needed
 
 ## Usage
 
-1. Open chat panel (`Cmd+I` on Mac, `Ctrl+I` on Windows/Linux)
-2. Click the model selector (shows "Claude", "GPT", etc.)
-3. Select **"DeepSeek Chat"** or **"DeepSeek Coder"**
+1. Open VS Code Chat (`Cmd+I`)
+2. Click the model selector dropdown
+3. Select any configured model (e.g., "DeepSeek Chat")
 4. Start chatting!
 
-## What This Does
+## Commands
 
-This extension adds DeepSeek as a **native language model provider** in VS Code:
-- ✅ DeepSeek appears alongside Claude, GPT in model selector
-- ✅ Uses your own DeepSeek API key
-- ✅ Streaming responses like native AI
-- ✅ Full chat history support
-- ✅ Two models: DeepSeek Chat & DeepSeek Coder
+- `Universal LLM: Configure Providers` - Configure API keys for providers
+- `Universal LLM: Add Provider` - Add custom OpenAI-compatible provider
+- `Universal LLM: Show Status` - View configured providers and models
 
-## Requirements
+## Settings
 
-- VS Code 1.88.0 or higher
-- DeepSeek API key (free tier available)
-- Node.js 18+ (for building)
-- GitHub Copilot individual plan (for third-party model providers)
-
-## Troubleshooting
-
-### Extension not appearing in model selector?
-1. **Restart VS Code** after installation
-2. **Check VS Code version** (must be 1.88.0+)
-3. **Verify API key** is configured correctly
-4. **Check Output panel** (View → Output → "DeepSeek Native Chat")
-5. **Ensure GitHub Copilot individual plan** is active
-
-### 'code' command not found?
-1. Open VS Code
-2. Press `Cmd+Shift+P` → "Shell Command: Install 'code' command in PATH"
-3. Or install manually via Extensions → Install from VSIX
-
-### API errors?
-- Check your API key is valid and has credits
-- Verify network connectivity to DeepSeek API
+Configure providers in `settings.json`:
+```json
+{
+  "universal-llm.providers": [
+    {
+      "name": "DeepSeek",
+      "vendor": "deepseek",
+      "apiKey": "sk-your-key",
+      "baseURL": "https://api.deepseek.com",
+      "enabled": true,
+      "models": ["deepseek-chat", "deepseek-coder"]
+    }
+  ]
+}
+```
 
 ## Development
 
@@ -99,14 +68,14 @@ This extension adds DeepSeek as a **native language model provider** in VS Code:
 # Install dependencies
 npm install
 
-# Watch for changes
-npm run watch
-
-# Rebuild
+# Compile TypeScript
 npm run compile
 
-# Test installation
-./install.sh
+# Package extension
+npm run package
+
+# Install locally (requires VSCode CLI)
+npm run install:local
 ```
 
 ## License

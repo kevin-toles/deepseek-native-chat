@@ -1,49 +1,85 @@
 {
-  "name": "deepseek-native-chat",
-  "displayName": "DeepSeek Native Chat",
-  "description": "DeepSeek AI as a native language model provider in VS Code",
+  "name": "universal-llm-provider",
+  "displayName": "Universal LLM Provider",
+  "description": "Universal LLM provider for VS Code - Supports DeepSeek, Qwen, Zhipu GLM, Moonshot Kimi and more",
   "version": "0.1.0",
   "publisher": "your-name",
   "engines": {
     "vscode": "^1.116.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning"
   ],
   "activationEvents": [
-    "onLanguageModelChat:deepseek",
-    "onStartupFinished",
-    "onCommand:deepseek.configure"
+    "onLanguageModelChat:universal-llm",
+    "onStartupFinished"
   ],
-  "enabledApiProposals": [],
   "main": "./out/extension.js",
   "contributes": {
     "languageModelChatProviders": [
       {
-        "vendor": "deepseek",
-        "displayName": "DeepSeek"
+        "vendor": "universal-llm",
+        "displayName": "Universal LLM"
       }
     ],
     "commands": [
       {
-        "command": "deepseek.configure",
-        "title": "Configure DeepSeek API Key",
-        "category": "DeepSeek"
+        "command": "universal-llm.configure",
+        "title": "Universal LLM: Configure Providers",
+        "category": "Universal LLM"
+      },
+      {
+        "command": "universal-llm.addProvider",
+        "title": "Universal LLM: Add Provider",
+        "category": "Universal LLM"
+      },
+      {
+        "command": "universal-llm.showStatus",
+        "title": "Universal LLM: Show Status",
+        "category": "Universal LLM"
       }
     ],
     "configuration": {
-      "title": "DeepSeek",
+      "title": "Universal LLM",
       "properties": {
-        "deepseek.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Your DeepSeek API key (get from https://platform.deepseek.com)",
-          "scope": "application"
-        },
-        "deepseek.baseURL": {
-          "type": "string",
-          "default": "https://api.deepseek.com",
-          "description": "DeepSeek API base URL",
+        "universal-llm.providers": {
+          "type": "array",
+          "default": [
+            {
+              "name": "DeepSeek",
+              "vendor": "deepseek",
+              "apiKey": "",
+              "baseURL": "https://api.deepseek.com",
+              "enabled": false,
+              "models": ["deepseek-chat", "deepseek-coder"]
+            },
+            {
+              "name": "Qwen",
+              "vendor": "qwen",
+              "apiKey": "",
+              "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "enabled": false,
+              "models": ["qwen-turbo", "qwen-plus", "qwen-max"]
+            },
+            {
+              "name": "Zhipu AI",
+              "vendor": "zhipu",
+              "apiKey": "",
+              "baseURL": "https://api.z.ai/v1",
+              "enabled": false,
+              "models": ["glm-5", "glm-5.1"]
+            },
+            {
+              "name": "Moonshot AI",
+              "vendor": "moonshot",
+              "apiKey": "",
+              "baseURL": "https://api.moonshot.ai/v1",
+              "enabled": false,
+              "models": ["kimi-k2.5", "kimi-k2.6"]
+            }
+          ],
+          "description": "Configured LLM providers",
           "scope": "application"
         }
       }
@@ -57,7 +93,7 @@
     "test": "node ./out/test/runTest.js",
     "install:dev": "npm install && npm run compile",
     "package": "vsce package --allow-missing-repository",
-    "install:local": "npm run package && code --install-extension deepseek-native-chat-*.vsix || echo \"If code command not found, install manually from VS Code: Extensions → ... → Install from VSIX\""
+    "install:local": "npm run package && code --install-extension universal-llm-provider-*.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -65,9 +101,5 @@
     "typescript": "^5.0.0",
     "@vscode/vsce": "^2.26.1"
   },
-  "dependencies": {},
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/deepseek-native-chat.git"
-  }
+  "dependencies": {}
 }

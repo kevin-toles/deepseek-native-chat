@@ -1,0 +1,20 @@
+{
+  "universal-llm.providers": [
+    {
+      "name": "DeepSeek",
+      "vendor": "deepseek",
+      "apiKey": "test-key",
+      "baseURL": "https://api.deepseek.com",
+      "enabled": true,
+      "models": ["deepseek-chat", "deepseek-coder"]
+    },
+    {
+      "name": "Qwen",
+      "vendor": "qwen",
+      "apiKey": "",
+      "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "enabled": false,
+      "models": ["qwen-turbo", "qwen-plus", "qwen-max"]
+    }
+  ]
+}
