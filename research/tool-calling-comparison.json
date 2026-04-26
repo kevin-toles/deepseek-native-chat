@@ -1,0 +1,197 @@
+{
+  "comparison": "Tool Calling Flow Comparison: VSCode Native vs OpenClaude vs Universal LLM Provider",
+  "date": "2025-07-13",
+
+  "flows": {
+    "vscode_native": {
+      "description": "How VSCode's LanguageModelChatProvider API works with supported models (OpenRouter, GitHub Copilot)",
+      "steps": [
+        "User sends message → VSCode Chat UI",
+        "VSCode collects tool definitions from MCP servers",
+        "VSCode calls provider.provideLanguageModelChatResponse(model, messages, options)",
+        "options.tools: array from connected MCP servers (passed EVERY invocation)",
+        "Provider sends POST /v1/chat/completions with: messages[], tools[], stream:true",
+        "Provider receives SSE stream",
+        "delta.content → LanguageModelTextPart",
+        "delta.tool_calls → LanguageModelToolCallPart",
+        "VSCode executes tool (LanguageModelToolCallPart → MCP execution)",
+        "Tool result → LanguageModelToolResultPart back to provider",
+        "VSCode calls provideLanguageModelChatResponse() AGAIN with tool results",
+        "options.tools still present on every invocation",
+        "Repeat until model responds with text only (no tool_calls)"
+      ]
+    },
+    "openclaude": {
+      "description": "How OpenClaude's openaiShim.ts (1098 lines) handles tool calling",
+      "steps": [
+        "Claude Code calls Anthropic SDK client.messages.create()",
+        "openaiShim intercepts this call",
+        "Converts Anthropic system prompts → OpenAI role:system message",
+        "Converts Anthropic content blocks block-by-block:",
+        "  - text blocks → assistant content string or array",
+        "  - tool_use blocks → assistant.tool_calls[] array items",
+        "  - tool_result blocks → separate role:tool messages with tool_call_id",
+        "  - thinking blocks → <thinking> tags in text content",
+        "  - image blocks → image_url parts in content array",
+        "Converts Anthropic tools (name, description, input_schema) → OpenAI tools array",
+        "  - Normalizes schemas: adds required[], additionalProperties: false",
+        "POST to any OpenAI-compatible API with messages[], tools[]",
+        "Processes SSE stream with activeToolCalls Map for accumulation",
+        "  - tool_calls come across multiple chunks (id+name then arguments)",
+        "  - Accumulates partial arguments in jsonBuffer per tool index",
+        "  - Auto-completes malformed JSON at finish (tries closing brackets)",
+        "Converts OpenAI streaming events back to Anthropic format",
+        "Claude Code processes tool_use events, executes tools, returns results",
+        "Tool results appended as tool_result blocks → next SDK call"
+      ],
+      "key_patterns": {
+        "accumulation": "activeToolCalls Map<index, {id, name, jsonBuffer}> — accumulates across chunks",
+        "finish_reason": "'tool_calls' → 'tool_use' mapping",
+        "schema_normalization": "normalizeSchemaForOpenAI() — adds required[], additionalProperties:false",
+        "content_handling": "Separates tool_use from text blocks, handles images, thinking"
+      }
+    },
+    "our_extension": {
+      "description": "Current state of Universal LLM Provider extension (396 lines)",
+      "steps": [
+        "VSCode calls provideLanguageModelChatResponse()",
+        "mapMessage() converts VSCode message parts to OpenAI format",
+        "For native models: injects tools[] array in request body",
+        "POST to provider API with messages[], (tools[] if native), stream:true",
+        "Stream loop processes chunks:",
+        "  - delta.content → LanguageModelTextPart",
+        "  - delta.tool_calls → LanguageModelToolCallPart (IF name AND arguments in same chunk)",
+        "After stream: fallback parser for non-native models only",
+        "Fallback: XML/JSON parser extracts tool calls from accumulated text"
+      ]
+    }
+  },
+
+  "bugs": [
+    {
+      "id": 1,
+      "priority": "HIGH",
+      "title": "No streaming tool call accumulation",
+      "location": "src/extension.ts — streaming loop (nativeToolCalling branch)",
+      "current_code": "if (tc.function?.name && tc.function?.arguments) { ... }",
+      "problem": "DeepSeek sends tool calls across multiple SSE chunks. First chunk has id+name with empty arguments (''). Subsequent chunks have arguments without name. Our check requires BOTH in same chunk, so the tool call is NEVER emitted.",
+      "chunk_sequence": [
+        "Chunk 1: { tool_calls: [{ index:0, id:'call_1', function:{ name:'list_dir', arguments:'' } }] }  ← SKIPPED (arguments is falsy)",
+        "Chunk 2: { tool_calls: [{ index:0, function:{ arguments:'{\"path\":' } }] }  ← SKIPPED (name undefined)",
+        "Chunk 3: { tool_calls: [{ index:0, function:{ arguments:'\"/tmp\"}' } }] }  ← SKIPPED (name undefined)",
+        "Result: Tool call never emitted to VSCode"
+      ],
+      "fix": "Implement activeToolCalls Map<index, {id, name, jsonBuffer}> keyed by tc.index, like OpenClaude. Initialize on id+name chunk, append on arguments chunks, emit on finish_reason:'tool_calls' or when JSON is parseable.",
+      "severity": "CRITICAL — Makes tool calling non-functional for DeepSeek"
+    },
+    {
+      "id": 2,
+      "priority": "MEDIUM",
+      "title": "Early return in mapMessage for tool results",
+      "location": "src/extension.ts — mapMessage() function",
+      "current_code": "if (part instanceof vscode.LanguageModelToolResultPart) { return { role:'tool', ... }; }",
+      "problem": "Returns on FIRST ToolResultPart. Parallel tool calls produce multiple results in one message; only the first is mapped.",
+      "fix": "Collect all tool results in an array, return all of them (or flatten into multiple messages).",
+      "severity": "HIGH when using parallel tool calls"
+    },
+    {
+      "id": 3,
+      "priority": "LOW",
+      "title": "No schema normalization for tool parameters",
+      "location": "src/extension.ts — requestBody.tools construction",
+      "current_code": "parameters: t.inputSchema || {}",
+      "problem": "OpenAI/DeepSeek strict mode requires additionalProperties:false and all properties in required[]. MCP schemas may not comply.",
+      "fix": "Normalize schemas: ensure all property keys are in required[], set additionalProperties:false on all object types.",
+      "severity": "LOW — may cause 400 errors with strict mode enabled"
+    },
+    {
+      "id": 4,
+      "priority": "MEDIUM",
+      "title": "content: null already fixed",
+      "location": "src/extension.ts — mapMessage()",
+      "current_code": "return { role, content: null, tool_calls: toolCalls };",
+      "status": "FIXED — Was content: '', now content: null matching OpenAI standard",
+      "severity": "WAS CRITICAL — DeepSeek requires null for assistant tool call messages"
+    }
+  ],
+
+  "three_column_comparison": {
+    "message_format": {
+      "vscode_native": "VSCode LanguageModelChatMessage parts",
+      "openclaude": "Anthropic content blocks (converted)",
+      "our_extension": "VSCode parts (mapped via mapMessage)"
+    },
+    "tool_definitions_source": {
+      "vscode_native": "options.tools from MCP servers",
+      "openclaude": "tools param (converted from Anthropic format)",
+      "our_extension": "options.tools from MCP servers"
+    },
+    "tools_on_every_call": {
+      "vscode_native": "Yes — VSCode passes on every invocation",
+      "openclaude": "Yes — Claude Code sends every request",
+      "our_extension": "Yes — re-reads from options.tools each call"
+    },
+    "streaming_accumulation": {
+      "vscode_native": "N/A (VSCode emits parts per-chunk)",
+      "openclaude": "activeToolCalls Map by tc.index ✅",
+      "our_extension": "None — requires name+args in same chunk ❌"
+    },
+    "parallel_tool_calls": {
+      "vscode_native": "Handled by VSCode",
+      "openclaude": "Multiple tool_use blocks → multiple tool_calls",
+      "our_extension": "Early return — only first tool result ❌"
+    },
+    "schema_normalization": {
+      "vscode_native": "N/A (provider's responsibility)",
+      "openclaude": "normalizeSchemaForOpenAI() ✅",
+      "our_extension": "Raw pass-through ❌"
+    },
+    "content_for_tool_messages": {
+      "vscode_native": "null for assistant, string for tool",
+      "openclaude": "null for assistant, string for tool",
+      "our_extension": "✅ Now null for assistant (was '')"
+    },
+    "fallback_parser": {
+      "vscode_native": "N/A",
+      "openclaude": "N/A (always native)",
+      "our_extension": "✅ Available for non-native models"
+    },
+    "error_handling": {
+      "vscode_native": "VSCode handles retry",
+      "openclaude": "Retry logic, rate limiting",
+      "our_extension": "Basic error logging only"
+    },
+    "image_thinking_content": {
+      "vscode_native": "Via appropriate part types",
+      "openclaude": "Handled via content blocks",
+      "our_extension": "Not handled"
+    }
+  },
+
+  "recommendations": [
+    {
+      "priority": "IMMEDIATE",
+      "action": "Implement streaming tool call accumulation (activeToolCalls Map)",
+      "files": ["src/extension.ts"],
+      "reason": "Without this, DeepSeek tool calls are never emitted to VSCode"
+    },
+    {
+      "priority": "NEXT",
+      "action": "Fix early return in mapMessage for multiple tool results",
+      "files": ["src/extension.ts"],
+      "reason": "Required for parallel tool call execution"
+    },
+    {
+      "priority": "FUTURE",
+      "action": "Add schema normalization for tool parameters",
+      "files": ["src/lib/capabilities.ts"],
+      "reason": "Prevents 400 errors with strict mode providers"
+    },
+    {
+      "priority": "FUTURE",
+      "action": "Consider removing fallback parser entirely for native models",
+      "files": ["src/extension.ts"],
+      "reason": "Unused code path for models that support native tool calling"
+    }
+  ]
+}
