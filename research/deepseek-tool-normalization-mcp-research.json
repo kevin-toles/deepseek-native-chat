@@ -1,0 +1,308 @@
+{
+  "title": "DeepSeek Non-Native Tool-Call Normalization Research Package",
+  "created_at": "2026-04-25",
+  "issue": {
+    "symptom": "DeepSeek API rejects a VS Code extension request with HTTP 400 because a message content field is not a string or list. The visible model output includes a fallback tool call in bare XML form: <manage_todo_list>{...}</manage_todo_list>.",
+    "target_repo": "/Users/kevintoles/POC/deepseek-native-chat",
+    "likely_failure_modes": [
+      "Non-native DeepSeek fallback models are receiving OpenAI-native tool_call message parts.",
+      "At least one message may be serialized with content: null.",
+      "Streaming text is reported before the fallback parser suppresses and dispatches tool calls.",
+      "The fallback parser does not yet normalize bare XML tags where the tag name is the tool name."
+    ]
+  },
+  "service_context": {
+    "unified_search_service": {
+      "url": "http://localhost:8081",
+      "status": "healthy",
+      "dependencies": [
+        "Qdrant connected",
+        "Neo4j connected",
+        "embedder loaded",
+        "ascii_diagrams collection ready"
+      ]
+    },
+    "mcp_gateway": {
+      "url": "http://localhost:8087",
+      "status": "healthy",
+      "working_transport": "SSETransport(\"http://localhost:8087/mcp/sse\")",
+      "note": "FastMCP Client(\"http://localhost:8087/mcp\") failed in Codex with Session terminated."
+    }
+  },
+  "mcp_queries": [
+    {
+      "tool": "search_in",
+      "arguments": {
+        "source": "code",
+        "query": "LLM tool call parser normalize JSON XML function-call streaming tool result",
+        "max_results": 5
+      }
+    },
+    {
+      "tool": "search_in",
+      "arguments": {
+        "source": "textbooks",
+        "query": "parser state machine streaming parser tool invocation normalize structured output",
+        "max_results": 5
+      }
+    },
+    {
+      "tool": "knowledge_refine",
+      "arguments": {
+        "collection": "code_chunks",
+        "query": "tool call parser JSON XML fallback parser malformed model output",
+        "limit": 5
+      }
+    },
+    {
+      "tool": "diagram_search",
+      "arguments": {
+        "query": "agent tool calling loop parser dispatch tool result flow",
+        "limit": 5
+      }
+    },
+    {
+      "tool": "knowledge_search",
+      "arguments": {
+        "query": "parser state machine recursive descent parsing structured output validation JSON XML tool calls",
+        "limit": 5,
+        "expand_taxonomy": true,
+        "mmr_rerank": true
+      }
+    }
+  ],
+  "cre_code_chunks": [
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "langchain",
+      "path": "ml/rag-agents/langchain/libs/core/langchain_core/output_parsers/json.py",
+      "lines": "31-127",
+      "score": 0.419273575,
+      "relevant_pattern": "A cumulative JSON output parser strips model text, supports partial parsing during streaming, returns null-like absence on incomplete JSON, and raises parser-specific errors only for final invalid JSON.",
+      "short_excerpt": "Parse the output of an LLM call to a JSON object.",
+      "application": "Use partial parse semantics while streaming, and only hard-fail once the final chunk has arrived."
+    },
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "langchain",
+      "path": "ml/rag-agents/langchain/libs/core/langchain_core/output_parsers/xml.py",
+      "lines": "151-250",
+      "score": 0.39213639499999997,
+      "relevant_pattern": "XML parsing is treated as model-output parsing, not transport truth. Expected tags are advisory; implementations still need robust extraction and error handling.",
+      "short_excerpt": "Parse an output using xml format.",
+      "application": "For fallback XML tool calls, parse only after isolation of a complete candidate tag, then validate against the extension's known tool registry."
+    },
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "ollama",
+      "path": "ml/inference/ollama/model/parsers/parsers.go",
+      "lines": "12-24",
+      "score": 0.35701784999999997,
+      "relevant_pattern": "A streaming parser interface accepts chunks incrementally and returns user-visible content separately from thinking text and tool calls.",
+      "short_excerpt": "Add processes streamed content and returns parsed content, thinking, and tool calls",
+      "application": "The VS Code extension should buffer possible tool-call spans and only report ordinary text after parser classification."
+    },
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "ollama",
+      "path": "ml/inference/ollama/x/models/glm4_moe_lite/parser.go",
+      "lines": "372-439",
+      "score": 0.41565201999999996,
+      "relevant_pattern": "The parser wraps raw model text in a synthetic root XML element, unmarshals it, trims and validates the function name, pairs argument keys and values, finds the matching tool schema, then coerces values by parameter type.",
+      "short_excerpt": "Wrap the content in a root element to make it valid XML",
+      "application": "Bare <manage_todo_list>...</manage_todo_list> should be normalized through a wrapper/root parse step, then checked against known tools before dispatch."
+    },
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "llama-cpp",
+      "path": "cpp/inference/llama-cpp/common/chat-parser-xml-toolcall.cpp",
+      "lines": "1-10",
+      "score": 0.34577600399999997,
+      "relevant_pattern": "The XML tool-call parser is coupled with partial JSON and partial regex helpers, implying fallback tool parsing needs incomplete-input handling.",
+      "short_excerpt": "json-partial.h",
+      "application": "Treat fallback tool-call detection as a streaming parse problem, not a final-response regex-only problem."
+    },
+    {
+      "source": "CRE code_chunks",
+      "repo_id": "owasp-zap",
+      "path": "security/owasp-zap/zap/src/main/java/org/parosproxy/paros/core/scanner/JsonParamParser.java",
+      "lines": "multiple chunks",
+      "score": 0.39394929,
+      "relevant_pattern": "A small explicit state machine tracks object, field, value, and post-value states while preserving token positions.",
+      "short_excerpt": "STATE_READ_VALUE",
+      "application": "Use explicit parser states for fallback text: outside text, possible tag, inside tool args, complete tool, malformed."
+    }
+  ],
+  "textbook_passages": [
+    {
+      "collection": "chapters",
+      "book_title": "Engineering a Compiler 2nd Edition",
+      "chapter_id": "engineering_a_compiler_2nd_edition_25b03be0_ch029",
+      "score": 0.74605289,
+      "concepts": [
+        "start symbol",
+        "parse tree",
+        "recursive descent",
+        "terminal symbols",
+        "formal grammar"
+      ],
+      "passage_note": "The chapter frames parsing as recognizing a stream of tokens against a grammar, building structure from terminals and nonterminals.",
+      "short_passage_excerpt": "it sees a stream of words",
+      "application": "Fallback LLM output can be handled as a token stream where text, tag delimiters, tool names, and JSON payloads are grammar terminals."
+    },
+    {
+      "collection": "chapters",
+      "book_title": "Compilers Principles Techniques and Tools 2nd Edition",
+      "chapter_id": "compilers_principles_techniques_and_tools_2nd_edit_6f69e7ad_ch033",
+      "score": 0.7200959180874634,
+      "concepts": [
+        "recursive descent",
+        "parse tree",
+        "syntax error",
+        "lookahead",
+        "input string"
+      ],
+      "passage_note": "The chapter connects recursive-descent procedures with lookahead-based decisions and match routines.",
+      "short_passage_excerpt": "void match (terminal t)",
+      "application": "The fallback parser should use lookahead before emitting text, because a '<' may begin either literal content or a tool-call tag."
+    },
+    {
+      "collection": "chapters",
+      "book_title": "Compilers Principles Techniques and Tools 2nd Edition",
+      "chapter_id": "compilers_principles_techniques_and_tools_2nd_edit_6f69e7ad_ch130",
+      "score": 0.656147,
+      "concepts": [
+        "LR parsing",
+        "input buffer",
+        "error recovery",
+        "shift",
+        "reduce"
+      ],
+      "passage_note": "The LR parser material emphasizes explicit action decisions over an input buffer and stack.",
+      "short_passage_excerpt": "ACTION[S, a] = shift t",
+      "application": "A fallback streaming parser should delay output until it can shift/reduce a full candidate tool call or safely classify the bytes as plain text."
+    },
+    {
+      "collection": "chapters",
+      "book_title": "Crafting Interpreters",
+      "chapter_id": "crafting_interpreters_77153850_ch022",
+      "score": 0.5671274036656346,
+      "concepts": [
+        "call expression",
+        "parser loop",
+        "property access",
+        "syntax tree"
+      ],
+      "passage_note": "The chapter's parser loops while the next token extends the current expression, then exits when no extension applies.",
+      "short_passage_excerpt": "if (match(LEFT_PAREN))",
+      "application": "Fallback tool parsing can use the same loop shape: keep consuming while a known tool-call continuation is present; otherwise flush normal text."
+    },
+    {
+      "collection": "chapters",
+      "book_title": "Writing an Interpreter in Go",
+      "chapter_id": "writing_an_interpreter_in_go_c623f8c9_ch011",
+      "score": null,
+      "concepts": [
+        "parser tests",
+        "program parser",
+        "lexer/parser boundary"
+      ],
+      "passage_note": "The chapter result emphasizes parser tests around concrete sample input.",
+      "short_passage_excerpt": "TestLetStatements",
+      "application": "Add regression tests for exact DeepSeek fallback strings, including bare XML tag tool calls and malformed JSON."
+    }
+  ],
+  "textbook_code_blocks": [
+    {
+      "book_title": "Compilers Principles Techniques and Tools 2nd Edition",
+      "chapter_id": "compilers_principles_techniques_and_tools_2nd_edit_6f69e7ad_ch033",
+      "code_block_count": 6,
+      "short_blocks": [
+        "void stmtO {",
+        "switch ( lookahead ) { case expr:",
+        "void optexprO { if ( lookahead == expr ) match(expr);",
+        "void match (terminal t) {"
+      ],
+      "application": "Use a small deterministic dispatcher keyed by tool-name lookahead, not a provider-specific payload assumption."
+    },
+    {
+      "book_title": "Compilers Principles Techniques and Tools 2nd Edition",
+      "chapter_id": "compilers_principles_techniques_and_tools_2nd_edit_6f69e7ad_ch130",
+      "code_block_count": 4,
+      "short_blocks": [
+        "if ( ACTION[S, a] = shift t ) {",
+        "} else if ( ACTION[S, a] = reduce A -> beta ) {"
+      ],
+      "application": "Model streaming chunks as an input buffer with explicit shift/reduce decisions."
+    },
+    {
+      "book_title": "Crafting Interpreters",
+      "chapter_id": "crafting_interpreters_77153850_ch022",
+      "code_block_count": 30,
+      "short_blocks": [
+        "while (true) {",
+        "if (match(LEFT_PAREN))",
+        "expr = finishCall(expr);"
+      ],
+      "application": "Continue reading until the candidate call is complete; do not emit partial tool-call text."
+    },
+    {
+      "book_title": "Engineering a Compiler 2nd Edition",
+      "chapter_id": "engineering_a_compiler_2nd_edition_25b03be0_ch029",
+      "code_block_count": 8,
+      "short_blocks": [
+        "context-free grammar G is a quadruple (T, NT, S, P)",
+        "stream of words"
+      ],
+      "application": "Define the fallback protocol grammar explicitly: tool tag, JSON object body, closing tag, optional surrounding text."
+    }
+  ],
+  "diagrams": [
+    {
+      "tool": "knowledge_search",
+      "book_title": "Engineering a Compiler 2nd Edition",
+      "chapter_id": "engineering_a_compiler_2nd_edition_25b03be0_ch029",
+      "diagram_type": "ascii",
+      "relevance": "medium",
+      "short_excerpt": "expression grammar over variables and operators",
+      "application": "Useful as a grammar-design reference for expressing fallback tool-call syntax."
+    },
+    {
+      "tool": "search_in",
+      "source": "diagrams",
+      "book_title": "Systems Performance Enterprise and the Cloud 2nd Edition",
+      "source_path": "systems_performance_enterprise_and_the_cloud_2nd_e_928bce9e/.../diagram_2",
+      "relevance": "low",
+      "short_excerpt": "histogram-style ASCII table",
+      "application": "Demonstrates that diagram_search was operational, but this hit is not directly useful for LLM tool parsing."
+    },
+    {
+      "tool": "diagram_search",
+      "book_title": "Hands-On System Programming with Go",
+      "source_path": "handson_system_programming_with_go_b97913ff/.../diagram_0",
+      "relevance": "low-to-medium",
+      "short_excerpt": "case ch1 <- b",
+      "application": "Weakly related to event/branch selection; not enough to drive implementation."
+    },
+    {
+      "tool": "diagram_search",
+      "book_title": "Compilers Principles Techniques and Tools 2nd Edition",
+      "source_path": "compilers_principles_techniques_and_tools_2nd_edit_6f69e7ad/.../diagram_0",
+      "relevance": "low",
+      "short_excerpt": "nested loop code diagram",
+      "application": "Confirms diagram index access, but not a primary source for this fix."
+    }
+  ],
+  "implementation_recommendation": {
+    "summary": "Normalize by capability. Native providers can receive OpenAI-style tool_calls. Non-native fallback providers should receive text-only prompts and parse model-produced text into internal tool calls.",
+    "steps": [
+      "Create a provider capability gate before request serialization.",
+      "For DeepSeek fallback mode, map message content to string or list only; never send content: null.",
+      "Strip or translate VS Code LanguageModelToolCallPart and tool-result parts before sending to DeepSeek if the model is configured as non-native.",
+      "Add a fallback parser arm for bare XML tool tags: <toolName>{json}</toolName>.",
+      "Validate toolName against registered tools and validate JSON args against the tool schema.",
+      "In streaming mode, buffer possible tool-call spans and suppress raw fallback markup until classified.",
+      "Add tests for complete tool call, partial streaming chunks, malformed JSON, unknown tool, and surrounding normal text."
+    ]
+  }
+}
