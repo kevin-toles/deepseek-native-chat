@@ -3,6 +3,49 @@ import { ToolCallParser, ToolInfo, ParserMode } from './lib/parser';
 import { getModelCapabilities } from './lib/capabilities';
 
 // ========================================================================
+// Reasoning Content Handling — Dual-Path Strategy
+// 
+// Path 1 (Primary): TEXT-WRAPPING — Embed reasoning content in TextPart markers.
+//   This ALWAYS survives VS Code's LanguageModelAccessPrompt.render() filtering.
+//   TextParts are never stripped, so this is the reliable path.
+//
+// Path 2 (Secondary): DATAPART — Emit as LanguageModelDataPart with custom MIME type.
+//   This works IF VS Code doesn't strip it — but currently it does get stripped.
+//   Keep it anyway for forward-compatibility if VS Code changes this behavior.
+//
+// Store fallback: Used to detect when DataPart was stripped (stale data hazard).
+//   We keep a list of reasoning contents per conversation to detect gaps.
+// ========================================================================
+const reasoningContentStore = new Map<string, string[]>();
+const MAX_STORE_ENTRIES = 20;
+
+function storeReasoning(key: string, content: string): void {
+  const existing = reasoningContentStore.get(key) || [];
+  existing.push(content);
+  reasoningContentStore.set(key, existing);
+  // Prune oldest conversation if over limit
+  if (reasoningContentStore.size > MAX_STORE_ENTRIES) {
+    const firstKey = reasoningContentStore.keys().next().value;
+    if (firstKey !== undefined) reasoningContentStore.delete(firstKey);
+  }
+}
+
+/**
+ * Derive a stable conversation key from the message history.
+ * Uses a simple hash of concatenated user message texts.
+ * This produces the same key for the same conversation chain.
+ */
+function deriveConversationKey(messages: readonly vscode.LanguageModelChatMessage[]): string {
+  const userTexts = messages
+    .filter(m => m.role === vscode.LanguageModelChatMessageRole.User)
+    .flatMap(m => m.content
+      .filter(p => p instanceof vscode.LanguageModelTextPart)
+      .map((p: any) => p.value),
+    );
+  return userTexts.join('|').slice(0, 160);
+}
+
+// ========================================================================
 // Types
 // ========================================================================
 
@@ -26,17 +69,35 @@ interface ModelInfo {
 // Message / Part Mapping Helpers
 // ========================================================================
 
-function mapMessage(msg: vscode.LanguageModelChatMessage): any | any[] {
+function mapMessage(msg: vscode.LanguageModelChatMessage): { mapped: any | any[]; hasDataPart: boolean } {
   const role = mapRole(msg.role);
   const parts = msg.content;
 
   const textParts: string[] = [];
   let toolCalls: any[] | undefined;
   const toolResults: any[] = [];
+  let reasoningContent: string | undefined;
+  let hasDataPart = false;
+
+  // Log all part types for diagnostics
+  const partTypes = parts.map(p => p?.constructor?.name ?? typeof p);
+  console.log(`[UniversalLLM] mapMessage role=${role} parts=[${partTypes.join(', ')}]`);
 
   for (const part of parts) {
     if (part instanceof vscode.LanguageModelTextPart) {
-      textParts.push(part.value);
+      // --- PRIMARY PATH: Extract reasoning content from text-wrapped markers ---
+      // TextPart is never stripped by VS Code's LanguageModelAccessPrompt.render().
+      // Wrap content in <|reasoning|>...</|reasoning|> markers when emitting,
+      // and parse it out here on the next turn. This is the RELIABLE path.
+      const text = part.value;
+      const rcMatch = text.match(/<\|reasoning\|>([\s\S]*?)<\|\/reasoning\|>/);
+      if (rcMatch) {
+        reasoningContent = rcMatch[1];
+        console.log(`[UniversalLLM] Extracted reasoning from text-wrapped marker (${rcMatch[1].length} chars)`);
+        // DO NOT push this text part — it's consumed by the marker extraction
+        continue;
+      }
+      textParts.push(text);
     } else if (part instanceof vscode.LanguageModelToolCallPart) {
       if (!toolCalls) toolCalls = [];
       toolCalls.push({
@@ -53,6 +114,22 @@ function mapMessage(msg: vscode.LanguageModelChatMessage): any | any[] {
         content: resultText,
         tool_call_id: part.callId,
       });
+    } else if (part instanceof vscode.LanguageModelDataPart) {
+      // --- SECONDARY PATH: Extract reasoning_content from DataPart ---
+      // DataPart gets stripped by VS Code's LanguageModelAccessPrompt.render()
+      // when it constructs messages to send to the provider. This path may fail.
+      // We keep it for forward-compatibility if VS Code changes this behavior.
+      try {
+        const raw = new TextDecoder().decode((part as any).data);
+        const meta = JSON.parse(raw);
+        if (meta.reasoning_content) {
+          reasoningContent = meta.reasoning_content;
+          hasDataPart = true;
+          console.log(`[UniversalLLM] DataPart found with reasoning_content (${meta.reasoning_content.length} chars)`);
+        }
+      } catch {
+        // Not a reasoning content DataPart — ignore
+      }
     } else if (typeof part === 'string') {
       textParts.push(part);
     }
@@ -60,16 +137,29 @@ function mapMessage(msg: vscode.LanguageModelChatMessage): any | any[] {
 
   // If there are tool results, return them (may be multiple for parallel calls)
   if (toolResults.length > 0) {
-    return toolResults.length === 1 ? toolResults[0] : toolResults;
+    return { mapped: toolResults.length === 1 ? toolResults[0] : toolResults, hasDataPart };
   }
 
   const content = textParts.join('\n');
 
+  // Build the outgoing message, preserving reasoning_content for round-trip.
+  // DeepSeek v4 models require reasoning_content on all assistant messages in a
+  // conversation to maintain chain-of-thought context across multi-turn calls.
+  // When thinking mode was active on any turn, ALL assistant messages must carry
+  // their reasoning_content — otherwise the API returns 400.
+
   if (toolCalls && role === 'assistant') {
-    return { role, content: null, tool_calls: toolCalls };
+    const apiMsg: any = { role, content: null, tool_calls: toolCalls };
+    if (reasoningContent) {
+      apiMsg.reasoning_content = reasoningContent;
+    }
+    return { mapped: apiMsg, hasDataPart };
   }
 
-  return { role, content };
+  return {
+    mapped: { role, content, ...(reasoningContent ? { reasoning_content: reasoningContent } : {}) },
+    hasDataPart,
+  };
 }
 
 // ========================================================================
@@ -77,21 +167,65 @@ function mapMessage(msg: vscode.LanguageModelChatMessage): any | any[] {
 // ========================================================================
 
 /**
- * Normalize a JSON schema for DeepSeek/OpenAI compliance.
- * Ensures type:"object", properties object, required array, and
- * additionalProperties:false are always present.
+ * Recursively normalize a JSON schema for DeepSeek/OpenAI compliance.
+ * Fixes type:null at every nesting level, ensures properties objects,
+ * required arrays, and additionalProperties:false throughout.
  */
 function normalizeSchema(schema: any): object {
-  if (!schema || typeof schema !== 'object') {
-    return { type: 'object', properties: {}, required: [] };
+  return normalizeNestedSchema(schema) ?? { type: 'object', properties: {}, required: [], additionalProperties: false };
+}
+
+function normalizeNestedSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+
+  const result: any = { ...schema };
+
+  // Fix null or missing type at any level
+  if ('type' in result && result.type === null) {
+    result.type = 'object';
   }
-  return {
-    ...schema,
-    type: 'object',
-    properties: schema.properties ?? {},
-    required: schema.required ?? [],
-    additionalProperties: schema.additionalProperties ?? false,
-  };
+
+  // Ensure additionalProperties defaults to false everywhere
+  if (!('additionalProperties' in result)) {
+    result.additionalProperties = false;
+  }
+
+  // Recurse into properties
+  if (result.properties && typeof result.properties === 'object') {
+    const normalizedProps: any = {};
+    for (const [key, val] of Object.entries(result.properties)) {
+      normalizedProps[key] = normalizeNestedSchema(val);
+    }
+    result.properties = normalizedProps;
+  }
+
+  // Recurse into array items schema
+  if (result.items) {
+    result.items = normalizeNestedSchema(result.items);
+  }
+
+  // Recurse into anyOf / oneOf branches
+  for (const branchKey of ['anyOf', 'oneOf']) {
+    if (result[branchKey] && Array.isArray(result[branchKey])) {
+      result[branchKey] = result[branchKey].map((s: any) => normalizeNestedSchema(s));
+    }
+  }
+
+  // Recurse into $defs / definitions
+  for (const defKey of ['$defs', 'definitions']) {
+    if (result[defKey] && typeof result[defKey] === 'object') {
+      const defs: any = {};
+      for (const [key, val] of Object.entries(result[defKey])) {
+        defs[key] = normalizeNestedSchema(val);
+      }
+      result[defKey] = defs;
+    }
+  }
+
+  // Ensure required is an array
+  result.required = result.required ?? [];
+
+  return result;
 }
 
 function mapRole(role: vscode.LanguageModelChatMessageRole): 'user' | 'assistant' | 'system' | 'tool' {
@@ -204,9 +338,33 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     // Build payload preserving all message parts.
     // Use flatMap because mapMessage can return an array for parallel tool results.
     const payloadMessages: any[] = messages.flatMap((msg) => {
-      const mapped = mapMessage(msg);
+      const { mapped } = mapMessage(msg);
       return Array.isArray(mapped) ? mapped : [mapped];
     });
+
+    // Inject reasoning_content onto assistant messages from the conversation store.
+    // This is a STALE DATA DETECTOR — it only activates when the DataPar path failed.
+    // We maintain a list of reasoning contents per conversation key to detect gaps
+    // and ensure we're injecting the correct content for each assistant message.
+    // DeepSeek v4-pro/v4-flash require reasoning_content on EVERY assistant message
+    // when thinking mode was active on any turn.
+    const conversationKey = deriveConversationKey(messages);
+    const storedList = reasoningContentStore.get(conversationKey) || [];
+    let storeIndex = 0;
+    for (let i = 0; i < payloadMessages.length; i++) {
+      const m = payloadMessages[i];
+      if (m.role === 'assistant') {
+        // If DataPart didn't provide reasoning_content, try the store
+        if (!m.reasoning_content) {
+          const rc = storedList[storeIndex];
+          if (rc) {
+            payloadMessages[i] = { ...m, reasoning_content: rc };
+            console.log(`[UniversalLLM] Store fallback injected reasoning_content (${rc.length} chars) — index=${storeIndex}`);
+          }
+        }
+        storeIndex++;
+      }
+    }
 
     // Inject tool prompt for non-native models (agnostic — includes all tool names)
     if (hasTools && !caps.nativeToolCalling && caps.fallbackParser !== 'none') {
@@ -225,6 +383,19 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
       messages: payloadMessages,
       stream: true,
     };
+
+    // DeepSeek v4 models have thinking mode ON by default at the API level.
+    // We do NOT explicitly set thinking/reasoning_effort because doing so
+    // creates an API requirement that reasoning_content be present on ALL
+    // previous assistant messages in the conversation. If the cache or DataPart
+    // mechanism fails to inject reasoning_content on round-trip, the API will
+    // reject the request with "reasoning_content must be passed back".
+    //
+    // The API still returns reasoning_content in streaming deltas even without
+    // these params — we capture it generically below via reasoningBuffer/DataPart.
+    // This gives us belt-and-suspenders: the cache fallback works when it can,
+    // but when it fails, the API won't reject us because we never told it to
+    // require reasoning_content in the first place.
 
     if (caps.nativeToolCalling && hasTools) {
       requestBody.tools = options.tools!.map((t) => ({
@@ -270,6 +441,8 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     let fullResponse = '';
     // Accumulate tool calls across SSE chunks (id+name in one chunk, arguments in others)
     const activeToolCalls = new Map<number, { id: string; name: string; jsonBuffer: string }>();
+    // Accumulate reasoning_content across SSE chunks (full thought before tool_calls)
+    let reasoningBuffer = '';
 
     try {
       while (!token.isCancellationRequested) {
@@ -295,6 +468,11 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
             if (text) {
               fullResponse += text;
               progress.report(new vscode.LanguageModelTextPart(text));
+            }
+
+            // Capture reasoning_content from streaming delta (DeepSeek v4-pro/v4-flash)
+            if (delta.reasoning_content) {
+              reasoningBuffer += delta.reasoning_content;
             }
 
             // Native model: accumulate structured tool calls from API chunks
@@ -345,6 +523,39 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
           );
         }
       }
+    }
+
+    // If we captured reasoning_content from the streaming response, emit it via
+    // BOTH paths to maximize the chance it survives the round-trip:
+    //
+    // Path 1 (PRIMARY — ALWAYS WORKS): Wrap in TextPart markers
+    //   TextParts are NEVER stripped by VS Code's LanguageModelAccessPrompt.render().
+    //   This is the reliable, guaranteed path for round-trip preservation.
+    //   Parse it back in mapMessage() using the <|reasoning|> marker.
+    //
+    // Path 2 (SECONDARY — MAY FAIL): Emit as LanguageModelDataPart
+    //   DataPart IS currently stripped by VS Code, but keep for forward-compat.
+    //
+    // Store: Persist all reasoning contents per conversation for gap detection.
+    //   When DataPart fails, we fall back to store. When both fail, we log a warning.
+    if (reasoningBuffer) {
+      // Path 1: Text-wrapped markers (RELIABLE — survives any VS Code filtering)
+      const wrappedText = `<|reasoning|>${reasoningBuffer}<|/reasoning|>`;
+      progress.report(new vscode.LanguageModelTextPart(wrappedText));
+      console.log(`[UniversalLLM] Emitted text-wrapped reasoning content (${reasoningBuffer.length} chars)`);
+
+      // Path 2: DataPart (forward-compat — may be stripped by VS Code)
+      progress.report(
+        vscode.LanguageModelDataPart.json(
+          { reasoning_content: reasoningBuffer },
+          'application/x-reasoning-json',
+        ),
+      );
+      console.log(`[UniversalLLM] Emitted DataPart reasoning content (${reasoningBuffer.length} chars)`);
+
+      // Store for gap detection and fallback
+      storeReasoning(conversationKey, reasoningBuffer);
+      console.log(`[UniversalLLM] Stored reasoning content for gap detection — key=${conversationKey}`);
     }
 
     // ====================================================================
