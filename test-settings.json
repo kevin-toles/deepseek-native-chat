@@ -11,9 +11,9 @@
     {
       "name": "Qwen",
       "vendor": "qwen",
-      "apiKey": "sk-0795345ed4604eff99281f4c610a39c7",
+      "apiKey": "",
       "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      "enabled": true,
+      "enabled": false,
       "models": ["qwen-turbo", "qwen-plus", "qwen-max"]
     }
   ]
