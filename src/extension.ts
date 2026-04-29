@@ -2,6 +2,16 @@ import * as vscode from 'vscode';
 import { ToolCallParser, ToolInfo, ParserMode } from './lib/parser';
 import { getModelCapabilities } from './lib/capabilities';
 
+// ── Structured Hop-Numbered Tracing ──────────────────────────────────────
+// Every interaction gets a unique T<N> trace ID. Logs mark each hop of
+// the call flow so you can open DevTools Console and follow a single
+// request from start to finish.
+let _traceSeq = 0;
+function trace(hop: string, msg: string, data?: unknown) {
+  console.log(`[T${_traceSeq}:${hop}] ${msg}`, data !== undefined ? data : '');
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 // ========================================================================
 // Reasoning Content Handling — Dual-Path Strategy
 // 
@@ -150,10 +160,19 @@ function mapMessage(msg: vscode.LanguageModelChatMessage): { mapped: any | any[]
 
   if (toolCalls && role === 'assistant') {
     const apiMsg: any = { role, content: null, tool_calls: toolCalls };
-    if (reasoningContent) {
-      apiMsg.reasoning_content = reasoningContent;
-    }
+    // ALWAYS include reasoning_content on assistant messages — even empty string.
+    // DeepSeek v4 models require the field on EVERY assistant message in the
+    // conversation, even those that previously came from non-thinking models.
+    apiMsg.reasoning_content = reasoningContent ?? '';
     return { mapped: apiMsg, hasDataPart };
+  }
+
+  // For assistant messages without tool calls, ALWAYS include reasoning_content
+  if (role === 'assistant') {
+    return {
+      mapped: { role, content, reasoning_content: reasoningContent ?? '' },
+      hasDataPart,
+    };
   }
 
   return {
@@ -298,6 +317,9 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken
   ): Promise<void> {
+    _traceSeq++;
+    trace('INIT', `model=${model.id} | tools=${options.tools?.length ?? 0} | mode=${options.toolMode ?? 'auto'}`);
+
     const modelId = model.id;
     const caps = getModelCapabilities(modelId);
     const hasTools = !!(options.tools && options.tools.length > 0);
@@ -306,6 +328,8 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     // Resolve provider config
     const providers = loadProviderConfigs();
     const providerConfig = findProviderForModel(modelId, providers);
+
+    trace('CONFIG', `vendor=${providerConfig?.vendor} | baseURL=${providerConfig?.baseURL} | enabled=${providerConfig?.enabled}`);
 
     if (!providerConfig) {
       throw new Error(`Provider not found for model: ${modelId}`);
@@ -348,6 +372,14 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     // and ensure we're injecting the correct content for each assistant message.
     // DeepSeek v4-pro/v4-flash require reasoning_content on EVERY assistant message
     // when thinking mode was active on any turn.
+    //
+    // CRITICAL FIX: When the store is empty for a given assistant message, we inject
+    // an empty string "" for reasoning_content rather than omitting it. This prevents
+    // the DeepSeek API from returning 400 "reasoning_content must be passed back".
+    // This happens when a non-thinking model (e.g. deepseek-chat) produced the assistant
+    // message — it returned 0 reasoning_content chars. On the next turn with a thinking
+    // model (e.g. deepseek-v4-pro), the store is empty at that index, but the API still
+    // demands the field on every assistant message.
     const conversationKey = deriveConversationKey(messages);
     const storedList = reasoningContentStore.get(conversationKey) || [];
     let storeIndex = 0;
@@ -357,9 +389,14 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
         // If DataPart didn't provide reasoning_content, try the store
         if (!m.reasoning_content) {
           const rc = storedList[storeIndex];
-          if (rc) {
+          if (rc !== undefined && rc !== null) {
             payloadMessages[i] = { ...m, reasoning_content: rc };
             console.log(`[UniversalLLM] Store fallback injected reasoning_content (${rc.length} chars) — index=${storeIndex}`);
+          } else {
+            // ALWAYS inject reasoning_content — even empty string — to prevent
+            // DeepSeek API 400 error on v4 models
+            payloadMessages[i] = { ...m, reasoning_content: '' };
+            console.log(`[UniversalLLM] Store fallback injected EMPTY reasoning_content — index=${storeIndex} (prevents API 400)`);
           }
         }
         storeIndex++;
@@ -411,12 +448,8 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
       }
     }
 
-    // Log the payload before sending
-    console.log(`[UniversalLLM] Sending ${payloadMessages.length} messages to ${modelId}`);
-    console.log(`[UniversalLLM] Message roles: [${payloadMessages.map(m => m.role).join(', ')}]`);
-    if (hasTools && !caps.nativeToolCalling) {
-      console.log(`[UniversalLLM] Tool system prompt injected: ${payloadMessages[0]?.role === 'system' ? payloadMessages[0]?.content?.substring(0, 80) + '...' : 'NO'}`);
-    }
+    trace('PAYLOAD', `model=${modelId} | msgs=${payloadMessages.length} | roles=[${payloadMessages.map(m => m.role).join(',')}] | tools=${hasTools} | mode=${caps.nativeToolCalling ? 'native' : 'fallback:' + caps.fallbackParser}`);
+    trace('FETCH', `POST ${providerConfig.baseURL}/chat/completions | key=${providerConfig.apiKey ? providerConfig.apiKey.substring(0, 12) + '...' : 'NONE'}`);
 
     // Call API
     const response = await fetch(`${providerConfig.baseURL}/chat/completions`, {
@@ -430,11 +463,11 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
 
     if (!response.ok || !response.body) {
       const errorText = await response.text().catch(() => '');
-      console.error(`[UniversalLLM] API error ${response.status}: ${errorText.substring(0, 200)}`);
+      trace('ERROR', `status=${response.status} | body=${errorText.substring(0, 200)}`);
       throw new Error(`${providerConfig.name} API error ${response.status}: ${response.statusText}. ${errorText}`);
     }
 
-    // Stream and process response
+    trace('STREAM', `status=${response.status} | starting SSE read`);
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
@@ -443,6 +476,8 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     const activeToolCalls = new Map<number, { id: string; name: string; jsonBuffer: string }>();
     // Accumulate reasoning_content across SSE chunks (full thought before tool_calls)
     let reasoningBuffer = '';
+    // Track unclosed <|reasoning|> markers that span across chunks
+    let reasoningMarkerOpen = false;
 
     try {
       while (!token.isCancellationRequested) {
@@ -464,10 +499,47 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
             const delta = parsed?.choices?.[0]?.delta;
             if (!delta) continue;
 
-            const text = delta.content;
-            if (text) {
-              fullResponse += text;
-              progress.report(new vscode.LanguageModelTextPart(text));
+            const rawText = delta.content;
+            if (rawText) {
+              fullResponse += rawText;
+
+              // Strip <|reasoning|>...</|reasoning|> markers that some models
+              // (e.g. DeepSeek v4-pro, DeepSeek R1 via certain providers) emit
+              // inline in delta.content rather than delta.reasoning_content.
+              // Capture the reasoning text into reasoningBuffer so it survives
+              // via DataPart + store fallback instead of leaking into chat UI.
+              let cleaned = rawText;
+
+              // If we're inside an unclosed reasoning marker from a prior chunk
+              if (reasoningMarkerOpen) {
+                const closeIdx = cleaned.indexOf('<|/reasoning|>');
+                if (closeIdx !== -1) {
+                  reasoningBuffer += cleaned.substring(0, closeIdx);
+                  cleaned = cleaned.substring(closeIdx + 14); // 14 = len('</|reasoning|>')
+                  reasoningMarkerOpen = false;
+                } else {
+                  reasoningBuffer += cleaned;
+                  cleaned = '';
+                }
+              }
+
+              // Strip any complete reasoning markers in the remaining text
+              cleaned = cleaned.replace(/<\|reasoning\|>([\s\S]*?)<\|\/reasoning\|>/g, (_match: string, inner: string) => {
+                reasoningBuffer += inner;
+                return '';
+              });
+
+              // Check if a new reasoning marker opens without closing in this chunk
+              const openIdx = cleaned.indexOf('<|reasoning|>');
+              if (openIdx !== -1) {
+                reasoningBuffer += cleaned.substring(openIdx + 13); // 13 = len('<|reasoning|>')
+                cleaned = cleaned.substring(0, openIdx);
+                reasoningMarkerOpen = true;
+              }
+
+              if (cleaned) {
+                progress.report(new vscode.LanguageModelTextPart(cleaned));
+              }
             }
 
             // Capture reasoning_content from streaming delta (DeepSeek v4-pro/v4-flash)
@@ -507,6 +579,8 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
       reader.releaseLock();
     }
 
+    trace('DONE', `fullResponse=${fullResponse.length} chars | reasoning=${reasoningBuffer.length} chars | toolCalls=${activeToolCalls.size}`);
+
     // Emit accumulated native tool calls after stream ends
     if (caps.nativeToolCalling && activeToolCalls.size > 0) {
       for (const [, entry] of activeToolCalls) {
@@ -526,25 +600,18 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     }
 
     // If we captured reasoning_content from the streaming response, emit it via
-    // BOTH paths to maximize the chance it survives the round-trip:
+    // DataPart + store for round-trip preservation.
     //
-    // Path 1 (PRIMARY — ALWAYS WORKS): Wrap in TextPart markers
-    //   TextParts are NEVER stripped by VS Code's LanguageModelAccessPrompt.render().
-    //   This is the reliable, guaranteed path for round-trip preservation.
-    //   Parse it back in mapMessage() using the <|reasoning|> marker.
+    // NOTE: We do NOT emit TextPart markers (<|reasoning|>...<|/reasoning|>) anymore.
+    // Those markers leak into the chat UI as visible text. Instead we rely on:
+    //   1. DataPart — invisible in chat, may be stripped by VS Code (but keeps working)
+    //   2. Store fallback — mapMessage() reads from reasoningContentStore when DataPart fails
+    //   3. Empty-string fallback — mapMessage() injects '' when both DataPart AND store miss
     //
-    // Path 2 (SECONDARY — MAY FAIL): Emit as LanguageModelDataPart
-    //   DataPart IS currently stripped by VS Code, but keep for forward-compat.
-    //
-    // Store: Persist all reasoning contents per conversation for gap detection.
-    //   When DataPart fails, we fall back to store. When both fail, we log a warning.
+    // The empty-string fallback prevents the DeepSeek API 400 error, at the cost of
+    // losing actual reasoning content on round-trip. But the chat UI stays clean.
     if (reasoningBuffer) {
-      // Path 1: Text-wrapped markers (RELIABLE — survives any VS Code filtering)
-      const wrappedText = `<|reasoning|>${reasoningBuffer}<|/reasoning|>`;
-      progress.report(new vscode.LanguageModelTextPart(wrappedText));
-      console.log(`[UniversalLLM] Emitted text-wrapped reasoning content (${reasoningBuffer.length} chars)`);
-
-      // Path 2: DataPart (forward-compat — may be stripped by VS Code)
+      // Path 1: DataPart (invisible in chat — may be stripped by VS Code)
       progress.report(
         vscode.LanguageModelDataPart.json(
           { reasoning_content: reasoningBuffer },
@@ -568,13 +635,15 @@ class UniversalLLMProvider implements vscode.LanguageModelChatProvider {
     if (hasTools && !caps.nativeToolCalling && caps.fallbackParser !== 'none') {
       const toolCall = parser.parseToolCall(fullResponse, caps.fallbackParser);
       if (toolCall) {
-        console.log(`[UniversalLLM] Parsed fallback tool call: ${toolCall.name}`);
+        trace('TOOL', `fallback | name=${toolCall.name} | args=${JSON.stringify(toolCall.args).substring(0, 100)}`);
         // Emit tool call part — VSCode owns execution & validation
         progress.report(new vscode.LanguageModelToolCallPart(
           `tc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
           toolCall.name,
           toolCall.args
         ));
+      } else {
+        trace('TOOL', `fallback | no tool call parsed from response: ${fullResponse.substring(0, 80)}`);
       }
     }
   }

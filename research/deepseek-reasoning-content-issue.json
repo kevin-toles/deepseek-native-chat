@@ -1,0 +1,178 @@
+{
+  "title": "DeepSeek reasoning_content round-trip issue",
+  "date": "2025-07-13",
+  "status": "unfixed",
+
+  "models_affected": {
+    "deepseek-v4-pro": {
+      "returns_reasoning_content": true,
+      "requires_reasoning_content_on_roundtrip": true,
+      "simple_chat_works": true,
+      "tool_calling_broken": true,
+      "error_message": "The `reasoning_content` in the thinking mode must be passed back to the API."
+    },
+    "deepseek-v4-flash": {
+      "returns_reasoning_content": true,
+      "requires_reasoning_content_on_roundtrip": true,
+      "simple_chat_works": true,
+      "tool_calling_broken": true,
+      "error_message": "The `reasoning_content` in the thinking mode must be passed back to the API."
+    },
+    "deepseek-reasoner": {
+      "returns_reasoning_content": true,
+      "requires_reasoning_content_on_roundtrip": false,
+      "simple_chat_works": true,
+      "tool_calling_broken": false,
+      "note": "Tested with tool round-trip without reasoning_content, and it succeeded."
+    },
+    "deepseek-chat": {
+      "returns_reasoning_content": false,
+      "requires_reasoning_content_on_roundtrip": false,
+      "simple_chat_works": true,
+      "tool_calling_works": true,
+      "note": "No reasoning_content at all — works without any special handling."
+    }
+  },
+
+  "streaming_behavior": {
+    "deepseek-v4-pro": {
+      "first_chunk": "{ delta: { role: 'assistant', content: null, reasoning_content: '' } }",
+      "middle_chunks": "{ delta: { content: null, reasoning_content: 'The user wants...' } }",
+      "tool_chunks": "{ delta: { tool_calls: [{ index:0, id:'call_...', function:{ name:'list_dir', arguments:'' } }] } }",
+      "pattern": "reasoning_content streams first (full thought), THEN tool_calls delta arrives. reasoning_content is NOT in the same chunk as tool_calls."
+    },
+    "deepseek-v4-flash": {
+      "note": "Same pattern as v4-pro (reasoning_content before tool_calls)"
+    },
+    "deepseek-reasoner": {
+      "note": "Same reasoning_content streaming pattern, but API does not require it on round-trip"
+    },
+    "deepseek-chat": {
+      "note": "No reasoning_content in stream at all"
+    }
+  },
+
+  "why_it_fails": {
+    "step_1": "User sends message → our extension sends POST with tools[]",
+    "step_2": "DeepSeek v4-pro/v4-flash streams reasoning_content chunks, then tool_calls chunks",
+    "step_3": "Our activeToolCalls Map captures tool_calls across chunks, emits LanguageModelToolCallPart",
+    "step_4": "VSCode executes the tool and calls provideLanguageModelChatResponse() again",
+    "step_5": "Our mapMessage() converts the assistant message from VSCode",
+    "step_6a": "VSCode's LanguageModelChatMessage for the assistant has ToolCallPart, but NO reasoning_content (VSCode doesn't expose it)",
+    "step_6b": "Our mapMessage() returns { role:'assistant', content:null, tool_calls:[...] } — NO reasoning_content field",
+    "step_7": "DeepSeek rejects the request: 'The reasoning_content in the thinking mode must be passed back to the API.'",
+    "root_cause": "VSCode's LanguageModelChatMessage system has no mechanism to carry reasoning_content between calls. It only has TextPart, ToolCallPart, and ToolResultPart. We cannot attach reasoning_content to the assistant message because VSCode's API doesn't allow custom metadata on messages."
+  },
+
+  "research_findings": {
+    "openclaude_openaiShim_ts": {
+      "handles_reasoning_content": false,
+      "note": "OpenClaude's openaiShim.ts does NOT handle reasoning_content at all. It only processes delta.content and delta.tool_calls. reasoning_content chunks are silently ignored."
+    },
+    "microsoft_vscode_copilot": {
+      "handles_reasoning_content": true,
+      "how": "Copilot uses its own chatMLFetcher.ts (not LanguageModelChatProvider API). It captures thinking/reasoning from stream deltas and stores it for OTel telemetry, but does NOT send it back on subsequent requests.",
+      "key_difference": "Copilot has its own streaming code (not using LanguageModelChatProvider API), so it can control the entire message lifecycle.",
+      "note": "VSCode's built-in Copilot does NOT use the LanguageModelChatProvider API at all. It has its own direct networking pipeline."
+    },
+    "openrouter": {
+      "handles_reasoning_content": "unknown",
+      "note": "OpenRouter likely handles reasoning_content server-side or strips it for models that don't need it. Their AI SDK provider is a thin wrapper around the Vercel AI SDK and delegates model-specific handling upstream.",
+      "repos_checked": ["OpenRouterTeam/ai-sdk-provider", "OpenRouterTeam/typescript-sdk"]
+    }
+  },
+
+  "possible_fixes": [
+    {
+      "approach": "Capturer reasoning_content + store in module-level Map",
+      "description": "During streaming, capture reasoning_content chunks. Store them in a Map<toolCallId, reasoningText> at module scope (outside the class). When mapMessage encounters an assistant message with tool_calls, look up the reasoning_content from the Map and inject it.",
+      "pros": [
+        "Keeps reasoning_content within our extension's memory",
+        "No VSCode API changes needed",
+        "Relatively simple implementation"
+      ],
+      "cons": [
+        "Module-level state persists across sessions — need cleanup logic",
+        "Map key management: tool call IDs from one call won't match the next VSCode invocation",
+        "VSCode generates new call IDs on each invocation (not DeepSeek's original call IDs)",
+        "Hard to correlate which reasoning_content belongs to which tool call"
+      ],
+      "viable": false,
+      "reason": "VSCode generates its own call IDs for LanguageModelToolCallPart. The call ID in the second invocation (from ToolResultPart) won't match the original DeepSeek call ID. We'd need a different keying strategy."
+    },
+    {
+      "approach": "Capture reasoning_content + append to progress.report text output",
+      "description": "Instead of emitting reasoning_content separately, wrap it in <thinking> tags and emit it as LanguageModelTextPart during streaming.",
+      "pros": [
+        "No state management needed",
+        "The text becomes part of the visible conversation history",
+        "VSCode will pass it back as a TextPart on subsequent calls"
+      ],
+      "cons": [
+        "User sees the reasoning text in chat (may not be desirable)",
+        "Doesn't solve the API requirement — DeepSeek needs reasoning_content as a field, not as text in the content"
+      ],
+      "viable": false
+    },
+    {
+      "approach": "Strip reasoning by using a different model parameter",
+      "description": "Check if DeepSeek has an API parameter to disable reasoning_content output.",
+      "pros": [
+        "No code changes needed if parameter exists"
+      ],
+      "cons": [
+        "DeepSeek may not support disabling reasoning_content",
+        "Changes the model's behavior"
+      ],
+      "viable": "investigating"
+    },
+    {
+      "approach": "Use deepseek-chat model ID when user selects v4-pro/v4-flash",
+      "description": "deepseek-chat routes to deepseek-v4-flash internally but WITHOUT reasoning_content. Map v4-pro and v4-flash requests to deepseek-chat internally.",
+      "pros": [
+        "Simple one-line change in capabilities.ts or request builder",
+        "Bypasses the reasoning_content requirement entirely",
+        "deepseek-chat is the same underlying model (v4-flash)"
+      ],
+      "cons": [
+        "User selects a specific model but gets a different one",
+        "v4-pro might have different capabilities than deepseek-chat (different routing)",
+        "Band-aid — breaks when deepseek-chat is deprecated"
+      ],
+      "viable": false
+    },
+    {
+      "approach": "[IMPLEMENTED] Emit reasoning_content as LanguageModelDataPart on streaming + recover on round-trip",
+      "description": "During streaming, capture reasoning_content from delta chunks into a buffer. When tool calls are emitted, also emit a LanguageModelDataPart.json containing { reasoning_content: '...' } with mime type 'application/x-reasoning-json'. VSCode's API carries LanguageModelDataPart through the serialization cycle, so on the next invocation of provideLanguageModelChatResponse, the inbound assistant message contains a LanguageModelDataPart. mapMessage() detects it, extracts reasoning_content, and injects it into the DeepSeek API request body.",
+      "how_it_works": {
+        "streaming": "reasoningBuffer accumulates delta.reasoning_content across SSE chunks. After stream ends and tool calls are emitted, a final LanguageModelDataPart.json is emitted with the accumulated reasoning text.",
+        "round_trip": "VSCode serializes the DataPart into the conversation history. On the next provideLanguageModelChatResponse call, mapMessage() iterates msg.content, finds the DataPart via instanceof vscode.LanguageModelDataPart, decodes the JSON, and adds reasoning_content to the API payload.",
+        "key_insight": "LanguageModelDataPart is the only VSCode API primitive that survives message serialization AND allows arbitrary structured data. It's not a hack — it's the designed extensibility point for carrying metadata."
+      },
+      "pros": [
+        "Future-proof — works with any model that returns reasoning_content (v4-pro, v4-flash, future v5 models)",
+        "No model remapping needed — user selects exactly the model they want",
+        "No module-level state or Map cleanup needed — data lives in the message history",
+        "VSCode-native API (LanguageModelDataPart) — not a workaround, it's the intended extensibility path",
+        "Survives VSCode session restores and conversation history persistence"
+      ],
+      "cons": [
+        "Adds ~8 lines of streaming capture + ~20 lines of mapMessage recovery logic",
+        "The DataPart is technically visible in the message content (but not rendered in chat UI)"
+      ],
+      "viable": true,
+      "implemented": true,
+      "files_changed": [
+        "src/extension.ts — capture reasoningBuffer during streaming, emit as DataPart, recover in mapMessage()"
+      ]
+    }
+  ],
+
+  "recommendation": {
+    "long_term_fix": "[IMPLEMENTED] Capture reasoning_content during streaming and emit it as a LanguageModelDataPart.json with mime 'application/x-reasoning-json'. mapMessage() recovers it on round-trip. This works because LanguageModelDataPart is the VSCode API's extensibility mechanism for carrying arbitrary structured data through message serialization.",
+    "note": "This is the permanent, future-proof fix. It works with ALL DeepSeek models (current and future) that return reasoning_content, without needing to know the model names in advance. It even works with deepseek-reasoner (which doesn't require it on round-trip but can carry it if desired). The fix does not rely on model ID mapping, so it won't break when DeepSeek deprecates model names.",
+    "files_changed": [
+      "src/extension.ts — reasoningBuffer streaming capture, DataPart emission after tool calls, DataPart recovery in mapMessage()"
+    ]
+  }
+}
