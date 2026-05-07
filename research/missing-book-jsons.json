@@ -1,0 +1,65 @@
+{
+  "date": "2025-07-13",
+  "scanned_directories": [
+    "/Users/kevintoles/POC/ai-platform-data/collections/software-engineering/raw",
+    "/Users/kevintoles/POC/ai-platform-data/collections/theoretical-foundations/raw",
+    "/Users/kevintoles/POC/ai-platform-data/collections/ai-safety/raw"
+  ],
+  "total_json_files_scanned": 6473,
+  "missing_titles": [
+    {
+      "category": "Speech & NLP",
+      "titles": [
+        "Speech and Language Processing — Daniel Jurafsky, James H. Martin (3rd Edition draft)",
+        "Voice User Interface Design — Michael H. Cohen, James P. Giangola, Jennifer Balogh",
+        "Designing Voice User Interfaces — Cathy Pearl",
+        "Spoken Dialogue Systems — Kristiina Jokinen, Michael McTear",
+        "Real-World Natural Language Processing — Masato Hagiwara",
+        "Building LLM-Powered Applications — Valentina Alto"
+      ]
+    },
+    {
+      "category": "Digital Signal Processing",
+      "titles": [
+        "Digital Signal Processing — Alan V. Oppenheim, Ronald W. Schafer",
+        "Discrete-Time Signal Processing — Alan V. Oppenheim, Ronald W. Schafer (3rd Edition)",
+        "Understanding Digital Signal Processing — Richard G. Lyons (3rd Edition)",
+        "The Scientist and Engineer's Guide to Digital Signal Processing — Steven W. Smith",
+        "Fundamentals of Speech Recognition — Lawrence Rabiner, Biing-Hwang Juang",
+        "Automatic Speech Recognition: A Deep Learning Approach — Dong Yu, Li Deng",
+        "Speech and Audio Signal Processing — Ben Gold, Nelson Morgan, Dan Ellis"
+      ]
+    },
+    {
+      "category": "Machine Learning & Deep Learning",
+      "titles": [
+        "Machine Learning: A Probabilistic Perspective — Kevin P. Murphy",
+        "Probabilistic Machine Learning: An Introduction — Kevin P. Murphy",
+        "The Hundred-Page Machine Learning Book — Andriy Burkov",
+        "Mathematics for Machine Learning — Marc Peter Deisenroth, A. Aldo Faisal, Cheng Soon Ong",
+        "Trustworthy Machine Learning — Kush R. Varshney"
+      ]
+    },
+    {
+      "category": "Data Engineering",
+      "titles": [
+        "Kafka: The Definitive Guide — Neha Narkhede, Gwen Shapira, Todd Palino (2nd Edition)",
+        "Feature Engineering and Selection — Max Kuhn, Kjell Johnson"
+      ]
+    },
+    {
+      "category": "Python",
+      "titles": [
+        "Effective Python — Brett Slatkin (2nd Edition)",
+        "Data Structures and Algorithms in Python — Michael T. Goodrich, Roberto Tamassia, Michael H. Goldwasser"
+      ]
+    },
+    {
+      "category": "UX / HCI",
+      "titles": [
+        "Conversational Design — Erika Hall"
+      ]
+    }
+  ],
+  "total_missing": 26
+}
